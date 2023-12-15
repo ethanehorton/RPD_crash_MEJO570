@@ -1,0 +1,298 @@
+---
+title: "Final - MEJO 570"
+author: "Ethan Horton"
+date: "2023-12-14"
+output: html_document
+---
+
+# Summary
+
+**Major findings**
+
+Of the more than 200,000 crashes the Raleigh Police Department has responded to and reported since Jan. 1, 2015, more than 30 percent of those were rear-end crashes. That rate is much higher — more than double — than the rate of any other cause of crash. In November 2023 rear-end crashes dropped significantly — from about 12 rear-end crashes per 10,000 commuters to about eight. Less crashes were reported overall in November, which may account for the drop in rear-end crashes. But, other kinds of crashes dropped by more, proportionally, than rear-ends did.
+	
+**Data basics**
+
+Data available from Wake County’s website (<https://data.wake.gov/datasets/ral::reported-crash-locations/explore?location=35.797935%2C-78.624284%2C9.96&showTable=true>), the locations, causes and other important data were used to determine the major findings of the analysis. Two data sets — one including the basic details of each crash and one containing coordinates and shapefile multipoints — were joined to provide a single set with both the details and the mapping requirements.
+	
+Tabular numbers from the Census Bureau were used to both set up a blank map of Wake County and to obtain the total number of commuters in Wake County — a comparison number used in the analysis of rear-end crashes. As expected, the Raleigh Police Department did not respond to many crashes outside of Raleigh, and all of the crashes listed in the dataset occurred inside Wake County, except for one rogue entry on I-95 southwest of Smithfield in Johnston County.
+	
+**Detailed findings**
+	
+The total number of crashes in the dataset was 205,203, with 65,739 — or 32% — being rear-end crashes. The next two highest categories, respectively, were sideswipes and angled crashes, at 15.1% and 10.3% of the total. Rear-ends made up more than double the second-place sideswipes, and more than second and third combined. Clearly, rear-end crashes were the most common type of crash, by far.
+	
+The street name data were jumbled and inconsistent, and it was clear that the RPD did not have a consistent way of marking where crashes occurred other than the exact coordinates. Even the city names were often misspelled, wrong or incoherent. Because of this limitation, it was difficult to group the data by street name and therefore difficult to see if there was a particular road that saw the most rear-end crashes. But, using an interactive map, it was clear that Glenwood Ave., Wade Ave., Capital Blvd. and I-440 were hotspots for rear-end crashes. 
+	
+Those roads are the major thoroughfares through and around Raleigh — especially for commuters — and it makes sense that they would be prone to rear-ends. Even the timing of the crashes suggests these would be hotspots. The most common times of day for rear-end crashes were during the morning and afternoon rush hours, when roads generally are more congested — especially collector roads and major thoroughfares like I-440 and Wade Ave. The data from rear-ends since Nov. 15, 2023 — about a month’s worth of data up to the point of the download, shows a similar trend of rear-ends occurring on major thoroughfares and collector roads. 
+	
+Glenwood Ave. had especially bunched results in the last month, centering on major intersections and highway interchanges — again, as expected. There were relatively few in downtown Raleigh, likely because of the low speed and small blocks. In fact, the area inside the Beltline with the most bunched crashes was Western Blvd., near its interchange with I-440.
+	
+According to the five-year American Community Survey, 193,813 people commute to work in Raleigh. Per 10,000 Raleigh commuters, in November 2023, there were 8.255 rear-end crashes. This number is down from 12.13 rear-ends per 10,000 commuters in October, which amounts to a 31.95% decrease month-on-month. Other kinds of crashes, though, decrease more month-on-month. Sideswipes decreased by more than 39%, backing up crashes decreased by more than 50% and angle crashes decreased by about 33%. Although rear-ends are more than doubly likely to happen, they decreased less than other types of crashes between October and November. It should also be noted that, for some reason, there are far more crashes reported in previous years. For instance, in October 2022, there were more than 600 rear-ends, compared to just 235 in October 2023.
+	
+Rear-end crashes, according to RPD’s reported data since 2015, are consistently much more common than any other kind of crash, and they occur most often on major thoroughfares and collector roads during the morning and afternoon rush hours. But, there has been a marked decrease in either crash reporting by RPD or crashes themselves in the last several months, with crashes per 10,000 commuters falling by more than 30% for most crash types, including rear-ends.
+
+# Setup
+
+We will be using the following variables:
+
+`crashes` - all crashes and data from Raleigh Police Department from Jan. 1, 2015 through Dec. 11, 2023
+
+`crashes_sf` - shapefile for the crashes in `crashes`, to be joined to `crashes`
+
+`wake-county` - a shapefile of Wake County
+
+`crashes_since_nov_15` - all `crashes` since Nov. 15, 2023
+
+`rear_ends_since_nov_15` - all `crashes_since_nov_15` caused primarily by a rear-end collision
+
+`rear_ends_all_time` - all `crashes` caused primarily by a rear-end collision
+
+`raleigh_travel` - tabular data from the 5-year ACS containing how many commuters drive to work in Raleigh
+
+`types_of_crashes_nov` - `crashes` from Nov. 1 to Dec. 1, 2023, counted by type of crash
+
+`types_of_crashes_oct_nov` - `crashes` from Oct. 1 to Nov. 1, 2023, counted by type of crash, and compared with the crashes from `types_of_crashes_nov`
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = '~/Documents/MEJO570/final_MEJO570')
+```
+
+We will need to load the tidycensus, tidyverse, lubridate, reactable and devtools packages before we get started.
+
+```{r, message=FALSE}
+library(tidyverse)
+library(tidycensus)
+library(lubridate)
+library(reactable)
+library(devtools)
+```
+
+Our data is crash locations and data from Wake County since 2015. Here, we're loading both datasets (the actual data and the mapping data) in.
+
+```{r, results = FALSE}
+crashes <- read_csv("Reported_Crash_Locations.csv",
+                    col_types = cols(
+                      OBJECTID = col_character(),
+                      key_crash = col_integer(),
+                      DateOfCrash = col_datetime(
+                        format = "%Y/%m/%d %H:%M:%S%z"),
+                      UpdateDate = col_datetime(
+                        format = "%Y/%m/%d %H:%M:%S%z")
+                      )
+                    )
+
+crashes_sf <- sf::st_read("Reported_Crash_Locations 2/Reported_Crash_Locations.shp") %>%
+  select(key_crash, geometry)
+```
+
+Next, even though we don't particularly need to (since the original, non-selected shapefile also includes most of the data from the original dataset), we'll join the geography data to the main dataset. To do that, we'll use a simple left_join().
+
+```{r}
+crashes <- left_join(crashes_sf, crashes, by = "key_crash")
+```
+
+There's some weird time zone inconsistencies going on. Let's fix that.
+
+```{r}
+crashes$DateOfCrash <- with_tz(crashes$DateOfCrash)
+```
+
+# Analysis
+
+Let's figure out some basics. Is the name for the city location clean?
+
+```{r, warning=FALSE}
+crashes %>%
+  group_by(LocationCity) %>%
+  summarise(n()) %>%
+  as.data.frame() %>%
+  select(-geometry) %>%
+  arrange(desc(`n()`))
+```
+
+Well, clearly not. Names of cities are so all over the place that they're beyond fixing. How about the cause of the crash?
+
+```{r}
+crashes %>%
+  group_by(FirstHarmfulEvent) %>%
+  summarise(n()) %>%
+  as.data.frame() %>%
+  select(-geometry) %>%
+  arrange(desc(`n()`))
+```
+
+This one is helpful! It's clearly standardized, and definitely something we can use in the analysis. Plus, we now know that 65,739 crashes were rear ends since 2015. Let's figure out how many there were total, and what percentage of those were rear-ends.
+
+```{r}
+crashes %>%
+  as_tibble() %>%
+  count() %>%
+  mutate(pct_rear_end = ((65739 / n) * 100))
+```
+
+More than 32 percent of all crashes since 2015 were rear ends. That's a lot. How does it compare to percentages for other crash causes? We know that it's the highest in rear-ends because of common-sense, but how does it shake out mathematically?
+
+```{r}
+crashes %>%
+  as.data.frame() %>%
+  count(FirstHarmfulEvent) %>%
+  mutate(pct_of_total = ((n / 205203) * 100)) %>%
+  arrange(desc(`pct_of_total`))
+```
+
+Yep. More than double. That's what we thought.
+
+Now, to get a sense of where these crashes — and especially rear-ends — are occurring, we need to load in a map of Wake County.
+
+```{r, results=FALSE}
+#census_api_key("3ed879379300d12d9cc072fb9b00c9c5e1db3262", install= TRUE, overwrite = TRUE)
+
+wake_county <- get_acs(geography = "county", 
+              variables = c(population = "B01003_001"), 
+              # the argument creating a population variable is only used because 'variables' is a required argument
+              state = "NC",
+              county = "Wake",
+              geometry=T)
+
+ggplot() + geom_sf(data = wake_county) + 
+theme_void()
+```
+
+Now, we'll put a map of our crashes on top of this map of Wake County.
+
+```{r}
+ggplot() + geom_sf(data = wake_county) + 
+  geom_sf(data = crashes) +
+theme_void()
+```
+
+The area of crashes makes sense --- since this data comes from the City of Raleigh and its police department, it makes sense that the crashes would be centered on Raleigh and not the other municipalities in Wake County.
+
+Now, let's figure out if there are hotspots for crashes since Nov. 15.
+
+```{r}
+crashes_since_nov_15 <- crashes %>%
+  filter(DateOfCrash >= "2023-11-15")
+
+ggplot() + geom_sf(data = wake_county) + 
+  geom_sf(data = crashes_since_nov_15) +
+theme_void()
+```
+
+No particular easy-to-read trends there --- what about read-ends since Nov. 15?
+
+## Read-ends analysis
+
+```{r}
+rear_ends_since_nov_15 <- crashes %>%
+  filter(DateOfCrash >= "2023-11-15", 
+         FirstHarmfulEvent == "Rear end, slow or stop")
+
+ggplot() + geom_sf(data = wake_county) + 
+  geom_sf(data = rear_ends_since_nov_15) +
+theme_void()
+```
+
+This would be much easier to read with an interactive map.
+
+```{r, warning=FALSE}
+library(leaflet)
+
+leaflet(data = rear_ends_since_nov_15) %>%
+  addTiles() %>%
+  setView(lng=-78.680031, lat=35.80, zoom = 10) %>%
+  addMarkers(lng = ~LocationLongitude, lat = ~LocationLatitude, popup = "Rear-end crash")
+```
+
+After zooming in, we can see Glenwood Ave., Wade Ave., Capital Blvd. and I-440 are hotspots for rear end crashes. No particular surprises there.
+
+Is there a relationship with the time of day of the rear end in the last month?
+
+```{r}
+rear_ends_since_nov_15 %>%
+  ggplot(aes(Crash_Date_Hour)) + geom_histogram(binwidth = 1) +
+  theme_classic()
+```
+
+It appears many of the rear-end crashes in Raleigh in the last month have come during rush-hours --- the morning rush, just after noon, and between 3 and 7 p.m. What about all-time?
+
+```{r}
+rear_ends_all_time <- crashes %>%
+  filter(FirstHarmfulEvent == "Rear end, slow or stop")
+  
+rear_ends_all_time %>%
+ggplot(aes(Crash_Date_Hour)) + geom_histogram(binwidth = 1) +
+  theme_classic()
+```
+
+As expected, rush-hours are still the times with the most rear-end crashes all-time. The 8 a.m. hour and the 5 p.m. hour are especially high compared to the hours on either side, which makes sense because of car traffic.
+
+Let's find out just how many people are traveling to and from work in Raleigh, so we can compare that to the number of crashes.
+
+```{r, message=FALSE}
+raleigh_travel <- get_acs(geography = "place", 
+              variables = c(drivers = "B08301_002"), 
+              # B08301_002 is the column that shows how many people drive to work each day
+              state = "NC",
+              geometry=T) %>%
+  filter(NAME == "Raleigh city, North Carolina")
+
+print(raleigh_travel$estimate)
+```
+
+Nearly 200,000 people drive to work in Raleigh. Let's find out how many crashes there were by type in November 2023 per 10,000 driving commuters. We're expecting rear-ends to top the list.
+
+```{r}
+types_of_crashes_nov <- crashes %>%
+  filter(DateOfCrash > "2023-11-01",
+         DateOfCrash < "2023-12-01") %>%
+  count(FirstHarmfulEvent) %>%
+  mutate(type_per_10k = ((n / 193813) * 10000)) %>%
+  arrange(desc(type_per_10k)) %>%
+  as_tibble() %>%
+  select(-geometry)
+
+colnames(types_of_crashes_nov) <- c('First Harmful Event', 'Crashes', 'Crashes Per 10k')
+
+types_of_crashes_nov$`Crashes Per 10k` <- signif(types_of_crashes_nov$`Crashes Per 10k`, digits = 4)
+
+# devtools::install_github("glin/reactable")
+
+reactable::reactable(types_of_crashes_nov, filterable = TRUE)
+```
+
+Again, as expected rear-end crashes were the most common cause of crashes in November 2023. Per 10,000 commuters, there were just over eight rear-ends in November.
+
+And, last, let's compare November crashes to October crashes, to see if there was a major month-on-month change in crashes per 10,000 commuters.
+
+```{r}
+types_of_crashes_oct_nov <- crashes %>%
+  filter(DateOfCrash > "2023-10-01",
+         DateOfCrash < "2023-11-01") %>%
+  count(FirstHarmfulEvent) %>%
+  mutate(type_per_10k = ((n / 193813) * 10000)) %>%
+  arrange(desc(type_per_10k)) %>%
+  as_tibble() %>%
+  select(-geometry)
+
+colnames(types_of_crashes_oct_nov) <- c('First Harmful Event', 'Crashes', 'Oct Per 10k')
+
+types_of_crashes_oct_nov$`Oct Per 10k` <- signif(types_of_crashes_oct_nov$`Oct Per 10k`, digits = 4)
+
+types_of_crashes_oct_nov <- types_of_crashes_oct_nov %>%
+  mutate('Nov Per 10k' = types_of_crashes_nov$`Crashes Per 10k`) %>%
+  mutate(difference = (types_of_crashes_oct_nov$`Oct Per 10k` - types_of_crashes_nov$`Crashes Per 10k`)) %>%
+  mutate(pct_drop = (`difference` / `Oct Per 10k`) * 100) %>%
+  select(-Crashes)
+
+types_of_crashes_oct_nov$difference <- signif(types_of_crashes_oct_nov$`difference`, digits = 4)
+types_of_crashes_oct_nov$pct_drop <- signif(types_of_crashes_oct_nov$pct_drop, digits = 4)
+colnames(types_of_crashes_oct_nov) <- c('First Harmful Event', 'Oct Per 10k', 'Nov Per 10k', 'Difference', 'Percent Drop')
+
+# devtools::install_github("glin/reactable")
+
+reactable::reactable(types_of_crashes_oct_nov, filterable = TRUE)
+```
+
+A major difference, indeed. October crashes were much higher than November --- almost four rear-ends more per 10,000 commuters.
